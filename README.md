@@ -26,24 +26,24 @@ Deployment inside the DestinE ML Demonstrator stack
 
 ## Model Components
 
-### ✔ Laplacian Positional Encodings (PE)
+### Laplacian Positional Encodings (PE)
 Encode electrical topology using eigenvectors of the normalized graph Laplacian.
 
-### ✔ Multi-Window Graph Attention (SMW-GSAT)
+### Multi-Window Graph Attention (SMW-GSAT)
 Several stacked GAT layers with different hop sizes:
 
 - Captures local + global electrical structure  
 - Scales to larger grids  
 - Mimics power flow locality and long-range interactions  
 
-### ✔ Node–Link Attention (NLAT-inspired)
+### Node–Link Attention (NLAT-inspired)
 Constructs link embeddings using:
 
 - Node embeddings  
 - Node PE  
 - Link PE (concatenated PE of endpoints)
 
-### ✔ MLP Decoder
+### MLP Decoder
 Maps link embeddings to predicted line flows or PCA components.
 
 ---
@@ -158,4 +158,5 @@ Reference
 Please cite the foundational architecture if you use this model:
 Optimal Power Flow in a highly renewable power system based on attention neural networks
 https://www.sciencedirect.com/science/article/abs/pii/S0306261924001624
+
 
