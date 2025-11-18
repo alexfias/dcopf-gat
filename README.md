@@ -1,9 +1,9 @@
-#ML Demonstrator — Physics-Informed Graph Attention Network for Power Systems
+# ML Demonstrator — Physics-Informed Graph Attention Network for Power Systems
 This repository contains the core machine-learning model developed for the Destination Earth (DestinE) ML Demonstrator, a project integrating high-resolution climate data with advanced energy system modelling. The demonstrator showcases how physics-informed machine learning can accelerate Optimal Power Flow (OPF), power flow estimation, and scenario analysis under climate variability.
 
 The model serves as the computational engine of the ML Demonstrator delivered under DestinE, linking climate-driven inputs with power system operation through a scalable, graph-based neural network.
 
-##Model Architecture
+## Model Architecture
 
 The model is a Physics-Informed Graph Attention Network (PINN-GAT) based on the architecture described in:
 
@@ -158,3 +158,4 @@ Reference
 Please cite the foundational architecture if you use this model:
 Optimal Power Flow in a highly renewable power system based on attention neural networks
 https://www.sciencedirect.com/science/article/abs/pii/S0306261924001624
+
