@@ -387,10 +387,12 @@ class GraphAttentionNetwork(keras.Model):
         self.loss_tracker.update_state(total_loss)
         self.loss_tracker1.update_state(resi_loss_flow)
         self.loss_tracker2.update_state(cons_loss)
+        self.metric.update_state(flow_labels, output)
         return {
             "loss": self.loss_tracker.result(),
             "loss1": self.loss_tracker1.result(),
             "loss2": self.loss_tracker2.result(),
+            "R2": self.metric.result(),
         }
 
     @property
@@ -400,18 +402,27 @@ class GraphAttentionNetwork(keras.Model):
     def test_step(self, data):
         node_states, labels = data
         gene_labels = labels[:, : self.num_nodes_orig]
-        flow_labels = labels[:, self.num_nodes_orig :]
+        flow_labels = labels[:, self.num_nodes_orig:]
         demand = node_states[:, :, -1]
 
         output = self(node_states, training=False)
         total_loss, resi_loss_flow, cons_loss = self.loss_func.call(
             gene_labels, flow_labels, output, demand
         )
+
+        # ✅ Update trackers so Keras logs val_loss / val_loss1 / val_loss2 correctly
+        self.loss_tracker.update_state(total_loss)
+        self.loss_tracker1.update_state(resi_loss_flow)
+        self.loss_tracker2.update_state(cons_loss)
+
+        # ✅ Update R2 on validation/test
         self.metric.update_state(flow_labels, output)
 
+        # ✅ Return tracked values (not raw tensors)
         return {
-            "loss": total_loss,
-            "loss1": resi_loss_flow,
-            "loss2": cons_loss,
+            "loss": self.loss_tracker.result(),
+            "loss1": self.loss_tracker1.result(),
+            "loss2": self.loss_tracker2.result(),
             "R2": self.metric.result(),
         }
+
