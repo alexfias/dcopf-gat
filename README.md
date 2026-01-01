@@ -91,6 +91,20 @@ pip install -r requirements.txt
 
 ---
 
+## Quick Start (Toy Dataset)
+
+To verify that the code runs end-to-end, the repository includes a small synthetic
+toy dataset generator.
+
+### 1. Generate the toy dataset
+
+From the repository root:
+
+
+# Windows / PowerShell
+$env:PYTHONPATH = (Get-Location).Path
+python scripts/generate_toy_dataset.py
+
 ## Training the Model
 
 Example usage:

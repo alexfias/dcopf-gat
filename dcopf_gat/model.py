@@ -23,8 +23,8 @@ def create_ffn(hidden_units, drop=False, dropout_rate=0.1, layers=1, active=True
 class MyR2(keras.metrics.Metric):
     def __init__(self, name="R2", **kwargs):
         super().__init__(name=name, **kwargs)
-        self.total = self.add_weight("total", initializer="zeros")
-        self.count = self.add_weight("count", initializer="zeros")
+        self.total = self.add_weight(name="total", initializer="zeros")
+        self.count = self.add_weight(name="count", initializer="zeros")
 
     def r2(self, y_true, y_pred):
         y_true = tf.cast(y_true, tf.float32)
@@ -377,7 +377,7 @@ class GraphAttentionNetwork(keras.Model):
 
         with tf.GradientTape() as tape:
             output = self(node_states, training=True)
-            total_loss, resi_loss_flow, cons_loss = self.loss_func(
+            total_loss, resi_loss_flow, cons_loss = self.loss_func.call(
                 gene_labels, flow_labels, output, demand
             )
 
@@ -404,7 +404,7 @@ class GraphAttentionNetwork(keras.Model):
         demand = node_states[:, :, -1]
 
         output = self(node_states, training=False)
-        total_loss, resi_loss_flow, cons_loss = self.loss_func(
+        total_loss, resi_loss_flow, cons_loss = self.loss_func.call(
             gene_labels, flow_labels, output, demand
         )
         self.metric.update_state(flow_labels, output)
