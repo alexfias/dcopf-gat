@@ -35,4 +35,42 @@ if __name__ == "__main__":
         epochs=args.epochs,
     )
 
+    print("test_x type:", type(test_x))
+    print("test_y type:", type(test_y))
+
+    try:
+        print("test_y shape:", test_y.shape)
+    except Exception:
+        pass
+
+    y_pred_dbg = model(test_x, training=False)
+    print("y_pred type:", type(y_pred_dbg))
+    try:
+        print("y_pred shape:", y_pred_dbg.shape)
+    except Exception:
+        pass
+
     print("Test metrics:", test_metrics)
+
+    from pathlib import Path
+    import numpy as np
+
+    out_dir = Path("runs/toy3bus_eval")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Predict on the returned test split
+    y_pred_test = model(test_x, training=False)
+
+    # Convert to numpy
+    y_pred_test = y_pred_test.numpy()
+    y_true_test = test_y.numpy() if hasattr(test_y, "numpy") else np.asarray(test_y)
+
+    # Save
+    np.save(out_dir / "y_pred_test.npy", y_pred_test)
+    np.save(out_dir / "y_true_test.npy", y_true_test)
+
+    print(f"Saved test outputs to {out_dir}")
+    print("Shapes:", y_true_test.shape, y_pred_test.shape)
+
+
+
