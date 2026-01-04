@@ -57,7 +57,7 @@ def run_experiment(
     set_global_seed(seed)
 
     train_x, train_y, val_x, val_y, test_x, test_y, meta = prepare_dataset(
-        data_dir, pca_flag=False, train_fraction=0.95, seed=seed
+        data_dir, pca_flag=False, train_fraction=0.8, seed=seed
     )
 
     model = build_model_from_meta(meta, lamb=0.001)

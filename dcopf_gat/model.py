@@ -281,8 +281,12 @@ class LinkAttention(keras.layers.Layer):
         K_exp = tf.expand_dims(K, axis=1)  # [B, 1, N, key_units]
         # simple attention: average V with pe weights (very simplified vs notebook)
         context = tf.reduce_mean(V, axis=1)  # [B, context_units]
-        context = tf.repeat(tf.expand_dims(context, axis=1), self.link_num, axis=1)
-        return context  # [B, L, context_units]
+        context = tf.repeat(tf.expand_dims(context, axis=1), self.link_num, axis=1)  # [B, L, context_units]
+
+        link_pe_ext = tf.repeat(tf.expand_dims(self.link_PE, axis=0), B, axis=0)  # [B, L, 2*num_code]
+        context = tf.concat([context, link_pe_ext], axis=-1)  # [B, L, context_units + 2*num_code]
+
+        return context  # [B, L, context_units + 2*num_code]
 
 
 class GraphAttentionNetwork(keras.Model):

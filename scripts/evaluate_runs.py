@@ -1,5 +1,6 @@
 from pathlib import Path
 import numpy as np
+import pandas as pd
 
 
 def r2_score(y_true: np.ndarray, y_pred: np.ndarray) -> np.ndarray:
@@ -17,55 +18,38 @@ def r2_score(y_true: np.ndarray, y_pred: np.ndarray) -> np.ndarray:
 
 
 def main():
+    # Where you saved outputs from run_experiment.py
     run_dir = Path("runs/toy3bus_eval")
+
+    # IMPORTANT: point this to the dataset used to generate the saved test outputs
+    data_dir = Path("data_toy_3bus")
 
     # Load full true targets and predictions
     y_true_full = np.load(run_dir / "y_true_test.npy")
     y_pred = np.load(run_dir / "y_pred_test.npy")
 
-    # Ensure predictions are 2D
-    if y_pred.ndim == 1:
-        y_pred = y_pred[:, None]
+    # Ensure 2D
     if y_true_full.ndim == 1:
         y_true_full = y_true_full[:, None]
+    if y_pred.ndim == 1:
+        y_pred = y_pred[:, None]
 
     print("y_true_full shape:", y_true_full.shape, "y_pred shape:", y_pred.shape)
 
-    # --- Correlation-based matching: which true columns correspond to pred dims? ---
-    best_cols = []
-    print("\nCorrelation matching (pred dim -> best y_true column):")
-    for j in range(y_pred.shape[1]):
-        corrs = []
-        for k in range(y_true_full.shape[1]):
-            a = y_true_full[:, k]
-            b = y_pred[:, j]
-            if np.std(a) < 1e-12 or np.std(b) < 1e-12:
-                corr = 0.0
-            else:
-                corr = np.corrcoef(a, b)[0, 1]
-            corrs.append(corr)
+    # Determine number of link-flow targets from links.csv
+    links = pd.read_csv(data_dir / "links.csv", index_col=0)
+    num_links = links.shape[0]
+    print(f"Evaluating flows: using last {num_links} columns of y_true_full")
 
-        best_k = int(np.argmax(np.abs(corrs)))
-        best_cols.append(best_k)
-        print(
-            f"  pred dim {j}: best matches y_true col {best_k} "
-            f"with corr={corrs[best_k]:+.3f}  (all={['%+.2f' % c for c in corrs]})"
-        )
+    # Flows are the last num_links columns in Y = [gen_bus_norm | flow_target]
+    y_true = y_true_full[:, -num_links:]
 
-    # Select those columns for evaluation
-    # If both predicted dims map to the same column, fall back to first D columns.
-    if len(set(best_cols)) < len(best_cols):
-        print("\nWarning: multiple pred dims mapped to the same y_true column.")
-        print("         Falling back to using the first columns of y_true_full.")
-        y_true = y_true_full[:, : y_pred.shape[1]]
-    else:
-        y_true = y_true_full[:, best_cols]
+    # Sanity check: model output dims should match number of links
+    assert y_true.shape[1] == y_pred.shape[1], (
+        f"Target mismatch: y_true {y_true.shape}, y_pred {y_pred.shape}. "
+        f"Expected model output dims == num_links ({num_links})."
+    )
 
-    # Ensure 2D
-    if y_true.ndim == 1:
-        y_true = y_true[:, None]
-
-    print(f"\nEvaluating using y_true columns: {best_cols}")
     print(f"Loaded: y_true {y_true.shape}, y_pred {y_pred.shape}\n")
 
     # 🔍 DEBUG: inspect first few samples
@@ -126,8 +110,8 @@ def main():
         plt.plot([mn, mx], [mn, mx])
         plt.xlabel("true")
         plt.ylabel("pred")
-        plt.title(f"Pred vs True (pred dim {d} vs y_true col {best_cols[d]})")
-        plt.savefig(plot_dir / f"pred_vs_true_dim{d:02d}.png", dpi=150, bbox_inches="tight")
+        plt.title(f"Pred vs True (flow dim {d})")
+        plt.savefig(plot_dir / f"pred_vs_true_flow_dim{d:02d}.png", dpi=150, bbox_inches="tight")
         plt.close()
 
     print(f"\nSaved scatter plots to {plot_dir}")

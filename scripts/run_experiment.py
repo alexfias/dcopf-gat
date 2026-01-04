@@ -35,6 +35,13 @@ if __name__ == "__main__":
         epochs=args.epochs,
     )
 
+    # ---- ADD THIS BLOCK ----
+    print("\n================ MODEL SUMMARY ================\n")
+    model.summary()
+    print("\n==============================================\n")
+
+    print("Test metrics:", test_metrics)
+
     print("test_x type:", type(test_x))
     print("test_y type:", type(test_y))
 
