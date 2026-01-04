@@ -91,7 +91,6 @@ class ConstrainedLoss(keras.losses.Loss):
         return withdraw + injection_neg
 
     def WeightedLogCosh(self, y_true, y_pred):
-        # logcosh
         diff = y_pred - y_true
         log_cosh = tf.math.log(tf.math.cosh(diff + 1e-12))
         if self.weights is None:
@@ -161,7 +160,6 @@ class GraphAttention(keras.layers.Layer):
             axis=-2,
         )  # [B, N, units]
 
-        # gather for edges
         node_states_expanded = tf.gather(node_states_transformed, self.edges, axis=1)
         node_states_expanded = tf.reshape(
             node_states_expanded, (-1, tf.shape(self.edges)[0], 2 * self.units)
@@ -212,81 +210,110 @@ class MultiHeadGraphAttention(keras.layers.Layer):
         return tf.concat(head_outputs, axis=-1)
 
 
-class LinkAttention(keras.layers.Layer):
+class LinkQueryAttention(keras.layers.Layer):
+    """
+    Level-B decoder (NLAT-like):
+      - Per-link query built from endpoint embeddings (+ optional link PE)
+      - Keys/Values are node embeddings (+ optional node PE)
+      - Cross-attention yields link-specific context
+    """
     def __init__(
         self,
-        link_num,
-        node_pe,
-        link_pe,
-        key_units=64,
-        context_units=128,
+        link_edges,          # [L,2] int indices in nodes_orig ordering
+        node_pe=None,        # [N,Cn] or None
+        link_pe=None,        # [L,Ce] or None
+        key_dim=64,
+        value_dim=128,
+        num_heads=4,
+        dropout=0.1,
         kernel_initializer="glorot_uniform",
         kernel_regularizer=None,
         **kwargs,
     ):
         super().__init__(**kwargs)
-        self.num_nodes = node_pe.shape[0]
-        self.link_num = link_num
-        self.key_units = key_units
-        self.context_units = context_units
-        self.link_PE = tf.cast(link_pe, dtype=tf.float32)
-        self.node_PE = tf.cast(node_pe, dtype=tf.float32)
-        self.num_code = self.node_PE.shape[-1]
+        self.link_edges = tf.constant(link_edges, dtype=tf.int32)
+        self.node_pe = None if node_pe is None else tf.cast(node_pe, tf.float32)
+        self.link_pe = None if link_pe is None else tf.cast(link_pe, tf.float32)
+
+        self.key_dim = int(key_dim)
+        self.value_dim = int(value_dim)
+        self.num_heads = int(num_heads)
+        self.dropout = float(dropout)
+
         self.kernel_initializer = keras.initializers.get(kernel_initializer)
         self.kernel_regularizer = keras.regularizers.get(kernel_regularizer)
 
-    def build(self, input_shape):
-        self.Wq = self.add_weight(
-            shape=(input_shape[-1], self.key_units),
-            initializer=self.kernel_initializer,
-            regularizer=self.kernel_regularizer,
-            name="kernel_query",
+        self.q_proj = keras.layers.Dense(
+            self.num_heads * self.key_dim, use_bias=False,
+            kernel_initializer=self.kernel_initializer,
+            kernel_regularizer=self.kernel_regularizer,
         )
-        self.Wk = self.add_weight(
-            shape=(input_shape[-1] + self.num_code, self.key_units),
-            initializer=self.kernel_initializer,
-            regularizer=self.kernel_regularizer,
-            name="kernel_key",
+        self.k_proj = keras.layers.Dense(
+            self.num_heads * self.key_dim, use_bias=False,
+            kernel_initializer=self.kernel_initializer,
+            kernel_regularizer=self.kernel_regularizer,
         )
-        self.Wv = self.add_weight(
-            shape=(input_shape[-1] + self.num_code, self.context_units),
-            initializer=self.kernel_initializer,
-            regularizer=self.kernel_regularizer,
-            name="kernel_value",
+        self.v_proj = keras.layers.Dense(
+            self.num_heads * self.value_dim, use_bias=False,
+            kernel_initializer=self.kernel_initializer,
+            kernel_regularizer=self.kernel_regularizer,
         )
-        super().build(input_shape)
+        self.out_proj = keras.layers.Dense(
+            self.value_dim, use_bias=False,
+            kernel_initializer=self.kernel_initializer,
+            kernel_regularizer=self.kernel_regularizer,
+        )
+        self.attn_drop = keras.layers.Dropout(self.dropout)
 
-    def call(self, inputs):
-        # inputs: [B, N, F]
-        node_states = inputs
+    def _split_heads(self, x, head_dim):
+        # x: [B, T, H*D] -> [B, H, T, D]
+        B = tf.shape(x)[0]
+        T = tf.shape(x)[1]
+        x = tf.reshape(x, [B, T, self.num_heads, head_dim])
+        return tf.transpose(x, [0, 2, 1, 3])
+
+    def call(self, node_states, training=False):
+        """
+        node_states: [B, N, F]
+        return:      [B, L, value_dim]
+        """
         B = tf.shape(node_states)[0]
 
-        node_pe_ext = tf.repeat(tf.expand_dims(self.node_PE, axis=0), B, axis=0)
-        node_states_pe = tf.concat([node_states, node_pe_ext], axis=-1)
+        # Keys/values come from all nodes (+ node PE)
+        kv = node_states
+        if self.node_pe is not None:
+            node_pe_ext = tf.repeat(tf.expand_dims(self.node_pe, axis=0), B, axis=0)  # [B,N,Cn]
+            kv = tf.concat([kv, node_pe_ext], axis=-1)  # [B,N,F+Cn]
 
-        Q = tf.matmul(node_states, self.Wq)  # [B, N, key_units]
-        K = tf.matmul(node_states_pe, self.Wk)  # [B, N, key_units]
-        V = tf.matmul(node_states_pe, self.Wv)  # [B, N, context_units]
+        # Queries come from link endpoints (+ link PE)
+        src = self.link_edges[:, 0]
+        dst = self.link_edges[:, 1]
+        h_src = tf.gather(node_states, src, axis=1)  # [B,L,F]
+        h_dst = tf.gather(node_states, dst, axis=1)  # [B,L,F]
+        q_in = tf.concat([h_src, h_dst], axis=-1)    # [B,L,2F]
 
-        # For each link, we attend to its two end buses using their PE embedded in link_PE
-        # Here we do simple average of bus0/bus1 keys for each link.
-        link_pe = self.link_PE  # [L, 2*num_code]
-        # Split link PE into indices of the two buses is not trivial here; instead we
-        # keep it simple: compute attention scores from Q to K and then aggregate per link externally.
-        # To keep behaviour close to notebook, we use mean over all nodes weighted by PE as a proxy.
+        if self.link_pe is not None:
+            link_pe_ext = tf.repeat(tf.expand_dims(self.link_pe, axis=0), B, axis=0)  # [B,L,Ce]
+            q_in = tf.concat([q_in, link_pe_ext], axis=-1)  # [B,L,2F+Ce]
 
-        # Score all nodes vs links with PE as weights:
-        pe_w = tf.nn.softmax(link_pe[:, : self.num_code], axis=-1)  # pseudo-weights
-        pe_w = tf.expand_dims(pe_w, axis=0)  # [1, L, C]
-        K_exp = tf.expand_dims(K, axis=1)  # [B, 1, N, key_units]
-        # simple attention: average V with pe weights (very simplified vs notebook)
-        context = tf.reduce_mean(V, axis=1)  # [B, context_units]
-        context = tf.repeat(tf.expand_dims(context, axis=1), self.link_num, axis=1)  # [B, L, context_units]
+        Q = self.q_proj(q_in)  # [B,L,H*key_dim]
+        K = self.k_proj(kv)    # [B,N,H*key_dim]
+        V = self.v_proj(kv)    # [B,N,H*value_dim]
 
-        link_pe_ext = tf.repeat(tf.expand_dims(self.link_PE, axis=0), B, axis=0)  # [B, L, 2*num_code]
-        context = tf.concat([context, link_pe_ext], axis=-1)  # [B, L, context_units + 2*num_code]
+        Qh = self._split_heads(Q, self.key_dim)      # [B,H,L,key_dim]
+        Kh = self._split_heads(K, self.key_dim)      # [B,H,N,key_dim]
+        Vh = self._split_heads(V, self.value_dim)    # [B,H,N,value_dim]
 
-        return context  # [B, L, context_units + 2*num_code]
+        scale = tf.cast(self.key_dim, tf.float32) ** -0.5
+        scores = tf.matmul(Qh, Kh, transpose_b=True) * scale  # [B,H,L,N]
+        attn = tf.nn.softmax(scores, axis=-1)                 # [B,H,L,N]
+        attn = self.attn_drop(attn, training=training)
+
+        ctx = tf.matmul(attn, Vh)  # [B,H,L,value_dim]
+        ctx = tf.transpose(ctx, [0, 2, 1, 3])  # [B,L,H,value_dim]
+        ctx = tf.reshape(ctx, [B, tf.shape(ctx)[1], self.num_heads * self.value_dim])  # [B,L,H*value_dim]
+
+        return self.out_proj(ctx)  # [B,L,value_dim]
 
 
 class GraphAttentionNetwork(keras.Model):
@@ -296,6 +323,7 @@ class GraphAttentionNetwork(keras.Model):
         num_links,
         node_pe_orig,
         link_pe,
+        link_edges,   # <-- NEW (required for Level-B decoder)
         edge_list,
         g_max,
         d_max,
@@ -326,13 +354,18 @@ class GraphAttentionNetwork(keras.Model):
             )
             for _ in range(num_layers)
         ]
-        self.decoder_layer = LinkAttention(
-            link_num=num_links,
-            node_pe=node_pe_orig,
+
+        # Level-B NLAT-like link-query attention decoder
+        self.decoder_layer = LinkQueryAttention(
+            link_edges=link_edges,
+            node_pe=node_pe_orig,   # keep PE as optional extra signal
             link_pe=link_pe,
-            key_units=64,
-            context_units=128,
+            key_dim=64,
+            value_dim=128,
+            num_heads=4,
+            dropout=0.1,
         )
+
         self.MLP = create_ffn(hidden_units=32, layers=2, drop=True)
         self.output_layer = keras.layers.Dense(
             1,
@@ -366,10 +399,17 @@ class GraphAttentionNetwork(keras.Model):
         node_states = inputs  # [B, N, F]
         B = tf.shape(node_states)[0]
         node_pe_ext = tf.repeat(tf.expand_dims(self.node_PE, axis=0), B, axis=0)
+
+        # preprocess + add node PE (as before)
         x = tf.concat([self.preprocess(node_states), node_pe_ext], axis=-1)
+
+        # GAT backbone
         for att in self.attention_layers:
             x = att(x)
-        context = self.decoder_layer(x)
+
+        # NLAT-like link-query attention decoder
+        context = self.decoder_layer(x, training=training)  # [B, L, value_dim]
+
         output = self.MLP(context)
         return tf.squeeze(self.output_layer(output), axis=-1)  # [B, L]
 
@@ -414,19 +454,14 @@ class GraphAttentionNetwork(keras.Model):
             gene_labels, flow_labels, output, demand
         )
 
-        # ✅ Update trackers so Keras logs val_loss / val_loss1 / val_loss2 correctly
         self.loss_tracker.update_state(total_loss)
         self.loss_tracker1.update_state(resi_loss_flow)
         self.loss_tracker2.update_state(cons_loss)
-
-        # ✅ Update R2 on validation/test
         self.metric.update_state(flow_labels, output)
 
-        # ✅ Return tracked values (not raw tensors)
         return {
             "loss": self.loss_tracker.result(),
             "loss1": self.loss_tracker1.result(),
             "loss2": self.loss_tracker2.result(),
             "R2": self.metric.result(),
         }
-

@@ -31,6 +31,7 @@ def build_model_from_meta(meta: Dict[str, Any], lamb: float = 0.001) -> keras.Mo
         num_links=num_links,
         node_pe_orig=node_pe_orig,
         link_pe=link_pe,
+        link_edges=meta["link_edges"],
         edge_list=edge_list,
         g_max=p_nom_bus,
         d_max=demand_max,

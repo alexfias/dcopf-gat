@@ -137,17 +137,58 @@ def prepare_dataset(
     adjacency = build_adjacency(buses.index, links)
     nodes_list = list(buses.index)
     nodes_orig_index = [nodes_list.index(n) for n in nodes_orig]
+
     node_pe_full = laplacian_pe(adjacency, num_codes=8 if num_nodes <= 40 else 16)
     node_pe_orig = node_pe_full[nodes_orig_index]
+
     withd_m, injec_m = power_incidence_matrices(nodes_orig, links)
+
     edge_list = build_edge_list_for_multi_hop(
-        adjacency, nodes_orig_index, multi_window=multi_window,
-        first_window=first_window, steps_per_window=steps_per_window
+        adjacency,
+        nodes_orig_index,
+        multi_window=multi_window,
+        first_window=first_window,
+        steps_per_window=steps_per_window,
     )
+
     link_pe = build_link_pe(node_pe_full, buses.index, links)
 
-    # check nodal balance (roughly)
-    # error = (flow.values @ withd_m) + (flow.values @ injec_m) - gen_bus.values + demand_reorder.values
+    # ------------------------------------------------------------------
+    # NEW: build link_edges in nodes_orig indexing for NLAT-like decoder
+    # link_edges[l] = (from_bus_idx, to_bus_idx) where indices refer to nodes_orig order.
+    # Ordering must match flow targets, which match "links" row ordering.
+    # ------------------------------------------------------------------
+    # detect column names (most common are bus0/bus1)
+    if "bus0" in links.columns and "bus1" in links.columns:
+        col0, col1 = "bus0", "bus1"
+    elif "from_bus" in links.columns and "to_bus" in links.columns:
+        col0, col1 = "from_bus", "to_bus"
+    elif "from" in links.columns and "to" in links.columns:
+        col0, col1 = "from", "to"
+    else:
+        raise ValueError(
+            f"links.csv must contain endpoint columns (e.g. bus0/bus1). "
+            f"Found columns: {list(links.columns)}"
+        )
+
+    bus_to_orig = {bus: i for i, bus in enumerate(nodes_orig)}
+    bus0_idx = links[col0].map(bus_to_orig)
+    bus1_idx = links[col1].map(bus_to_orig)
+
+    if bus0_idx.isna().any() or bus1_idx.isna().any():
+        bad_rows = links[bus0_idx.isna() | bus1_idx.isna()].head(10)
+        raise ValueError(
+            "Some link endpoints are not contained in nodes_orig. "
+            "Check nodes_orig.csv vs links.csv endpoints.\n"
+            f"Example problematic rows:\n{bad_rows}"
+        )
+
+    link_edges = np.stack([bus0_idx.values, bus1_idx.values], axis=1).astype(np.int32)
+
+    assert link_edges.shape == (num_links, 2)
+    assert link_edges.min() >= 0
+    assert link_edges.max() < num_nodes_orig
+    # ------------------------------------------------------------------
 
     # PCA on flow if requested
     pca = None
@@ -212,6 +253,7 @@ def prepare_dataset(
         "edge_list": edge_list,
         "node_pe_orig": node_pe_orig,
         "link_pe": link_pe,
+        "link_edges": link_edges,  # <-- NEW
         "pca": pca,
         "output_weight": output_weight,
     }
