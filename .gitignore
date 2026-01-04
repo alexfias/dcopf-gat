@@ -8,3 +8,9 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+
+
+# Local run outputs
+runs/
+*.npy
+*.png
