@@ -42,7 +42,12 @@ def load_raw_data(data_dir: str | pathlib.Path):
 
     gen_setting = pd.read_csv(data_dir / "generators.csv", index_col=0)
     buses = pd.read_csv(data_dir / "buses.csv", index_col=0)
-    nodes_orig = pd.read_csv(data_dir / "nodes_orig.csv", index_col=0).iloc[:, 0]
+    nodes_orig_df = pd.read_csv(data_dir / "nodes_orig.csv")
+    if "name" in nodes_orig_df.columns:
+        nodes_orig = nodes_orig_df["name"]
+    else:
+        # fallback: first column
+        nodes_orig = nodes_orig_df.iloc[:, 0]
 
     return {
         "p_t": p_t,

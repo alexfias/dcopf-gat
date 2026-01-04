@@ -1,3 +1,4 @@
+# make_toy_3bus.py
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -9,20 +10,18 @@ def main():
     out_dir.mkdir(exist_ok=True)
 
     # Basic dimensions
-    T = 100          # time steps
+    T = 2000          # time steps (increase for more data, e.g. 10000)
     buses = ["Bus0", "Bus1", "Bus2"]
     N = len(buses)
     links = ["L0", "L1"]
     L = len(links)
 
     # --- BUSES ---
-    # Minimal buses.csv: we only really use the index (bus names)
     buses_df = pd.DataFrame(index=buses)
     buses_df.index.name = "name"
     buses_df.to_csv(out_dir / "buses.csv")
 
     # --- NODES_ORIG ---
-    # Just take all buses as "nodes_orig"
     nodes_orig_df = pd.DataFrame({"name": buses})
     nodes_orig_df.to_csv(out_dir / "nodes_orig.csv", index=False)
 
@@ -58,7 +57,6 @@ def main():
     time_index = pd.date_range("2020-01-01", periods=T, freq="H")
 
     # --- DEMAND ---
-    # loads-p_set.csv: columns like "BusX total_demand"
     rng = np.random.default_rng(42)
     demand = rng.uniform(30, 60, size=(T, N))  # MW-ish
     demand_cols = [f"{b} total_demand" for b in buses]
@@ -66,6 +64,7 @@ def main():
     demand_df.to_csv(out_dir / "loads-p_set.csv")
 
     # --- FLOWS + GENERATION (consistent with nodal balance) ---
+    #
     # Orientation:
     #   L0: Bus0 (withdraw) -> Bus1 (inject)
     #   L1: Bus1 (withdraw) -> Bus2 (inject)
@@ -75,24 +74,46 @@ def main():
     #   gen1 = demand1 + f1 - f0
     #   gen2 = demand2 - f1
     #
-    # So if we choose flows and demand, we can compute generation.
+    flows = np.zeros((T, L), dtype=float)
+    gen = np.zeros((T, N), dtype=float)
 
-    flows = np.zeros((T, L))
-    gen = np.zeros((T, N))
 
+    # --- WEATHER / p_max_pu ---
+    # Simple: capacity factors in [0, 1] for each generator
+    cf = rng.uniform(0.2, 1.0, size=(T, len(gen_names)))
+    cf_df = pd.DataFrame(cf, index=time_index, columns=gen_names)
+    cf_df.to_csv(out_dir / "p_max_pu.csv")
+
+    
     for t in range(T):
         d0, d1, d2 = demand[t]
 
-        # small-ish flows relative to demand, so generation stays positive
-        f0 = rng.uniform(-10, 10)
-        f1 = rng.uniform(-10, 10)
+        # Resample flows up to 20 times to keep generators within [0, 100]
+        # Scale flows with demand so the dataset has richer regimes
+        for _ in range(20):
+            # Use weather to create a controllable signal (capacity factor difference)
+            w = cf[t, 0] - cf[t, 2]  # in [-0.8, 0.8] roughly
 
-        g0 = d0 + f0
-        g1 = d1 + f1 - f0
-        g2 = d2 - f1
+            # Demand imbalance signal (normalized)
+            imb01 = (d0 - d1) / 100.0
+            imb12 = (d1 - d2) / 100.0
 
-        # simple clipping: if any generator goes negative, just zero flows
-        if g0 < 0 or g1 < 0 or g2 < 0 or g0 > 100 or g1 > 100 or g2 > 100:
+            # Structured flows + noise
+            f0 = 12.0 * imb01 + 8.0 * w + rng.normal(0, 1.0)
+            f1 = 12.0 * imb12 - 8.0 * w + rng.normal(0, 1.0)
+
+            # Optional: clip to keep within a realistic range
+            f0 = float(np.clip(f0, -20.0, 20.0))
+            f1 = float(np.clip(f1, -20.0, 20.0))
+
+            g0 = d0 + f0
+            g1 = d1 + f1 - f0
+            g2 = d2 - f1
+
+            if 0.0 <= g0 <= 100.0 and 0.0 <= g1 <= 100.0 and 0.0 <= g2 <= 100.0:
+                break
+        else:
+            # If resampling fails, fall back to zero flows
             f0 = 0.0
             f1 = 0.0
             g0 = d0
@@ -110,14 +131,8 @@ def main():
     flow_ts = pd.DataFrame(flows, index=time_index, columns=links)
     flow_ts.to_csv(out_dir / "linkf.csv")
 
-    # --- WEATHER / p_max_pu ---
-    # Very simple: capacity factors in [0, 1] for each generator
-    cf = rng.uniform(0.2, 1.0, size=(T, len(gen_names)))
-    cf_df = pd.DataFrame(cf, index=time_index, columns=gen_names)
-    cf_df.to_csv(out_dir / "p_max_pu.csv")
 
     # --- STORES (dummy) ---
-    # stores_t_e.csv: not used by our pipeline, but we create an empty / zero one
     stores_df = pd.DataFrame(
         np.zeros((T, 1)),
         index=time_index,
@@ -126,6 +141,7 @@ def main():
     stores_df.to_csv(out_dir / "stores_t_e.csv")
 
     print(f"Toy dataset written to: {out_dir.resolve()}")
+    print(f"T = {T} snapshots")
 
 
 if __name__ == "__main__":
