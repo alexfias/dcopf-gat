@@ -117,7 +117,7 @@ python make_toy_ieee14.py
 ```
 This creates
 ```bash
-data_toy_3bus/
+data_toy_ieee14/
 ```
 
 ## Training the Model
