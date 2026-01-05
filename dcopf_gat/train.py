@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
 
 import tensorflow as tf
 from tensorflow import keras
@@ -10,6 +10,7 @@ from tensorflow import keras
 from .data import prepare_dataset
 from .model import GraphAttentionNetwork
 from .utils import set_global_seed
+from .data_pipeline import make_dataset
 
 
 def build_model_from_meta(meta: Dict[str, Any], lamb: float = 0.001) -> keras.Model:
@@ -54,7 +55,8 @@ def run_experiment(
     batch_size: int = 32,
     epochs: int = 200,
     seed: int = 1234,
-):
+    use_tfdata: bool = True,
+) -> Tuple[keras.Model, keras.callbacks.History, Tuple, Dict[str, float]]:
     set_global_seed(seed)
 
     train_x, train_y, val_x, val_y, test_x, test_y, meta = prepare_dataset(
@@ -63,7 +65,7 @@ def run_experiment(
 
     model = build_model_from_meta(meta, lamb=0.001)
 
-    # Build model by calling once
+    # Build model by calling once (subclassed model)
     _ = model(tf.convert_to_tensor(train_x[:1], dtype=tf.float32))
 
     model.compile(
@@ -76,15 +78,28 @@ def run_experiment(
         restore_best_weights=True,
     )
 
-    history = model.fit(
-        x=train_x,
-        y=train_y,
-        batch_size=batch_size,
-        epochs=epochs,
-        validation_data=(val_x, val_y),
-        callbacks=[early_stop],
-        verbose=2,
-    )
+    if use_tfdata:
+        train_ds = make_dataset(train_x, train_y, batch_size=batch_size, shuffle=True)
+        val_ds = make_dataset(val_x, val_y, batch_size=batch_size, shuffle=False)
 
-    test_metrics = model.evaluate(test_x, test_y, verbose=0)
+        history = model.fit(
+            train_ds,
+            epochs=epochs,
+            validation_data=val_ds,
+            callbacks=[early_stop],
+            verbose=2,
+        )
+    else:
+        history = model.fit(
+            x=train_x,
+            y=train_y,
+            batch_size=batch_size,
+            epochs=epochs,
+            validation_data=(val_x, val_y),
+            callbacks=[early_stop],
+            verbose=2,
+        )
+
+    # Return dict for easier downstream logging
+    test_metrics = model.evaluate(test_x, test_y, verbose=0, return_dict=True)
     return model, history, (test_x, test_y), test_metrics

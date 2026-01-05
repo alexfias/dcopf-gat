@@ -370,6 +370,7 @@ class GraphAttentionNetwork(keras.Model):
         self.output_layer = keras.layers.Dense(
             1,
             activation=None if pca_obj is not None else keras.activations.tanh,
+            dtype="float32", 
         )
 
         pca_flag = pca_obj is not None
