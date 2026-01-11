@@ -2,6 +2,9 @@
 import numpy as np
 import pandas as pd
 from pathlib import Path
+from dcopf_gat.dcopf import DcOpfTopology, solve_dcopf_ptdf
+
+
 
 
 def build_bbus(num_buses: int, branches, base_mva: float = 100.0) -> np.ndarray:
@@ -26,6 +29,29 @@ def build_bbus(num_buses: int, branches, base_mva: float = 100.0) -> np.ndarray:
     return B
 
 
+def build_incidence(num_buses: int, branches) -> np.ndarray:
+    """
+    Incidence matrix A (n_l, n_b): each row has +1 at bus0 and -1 at bus1
+    consistent with your compute_dc_pf_flows sign convention (bus0 -> bus1).
+    branches are 1-indexed.
+    """
+    L = len(branches)
+    A = np.zeros((L, num_buses), dtype=float)
+    for ell, (i, j, x) in enumerate(branches):
+        A[ell, i - 1] = 1.0
+        A[ell, j - 1] = -1.0
+    return A
+
+
+def build_gen_map(num_buses: int) -> np.ndarray:
+    """
+    One generator per bus => G is identity (n_b, n_g) with n_g = n_b.
+    If later you have multiple gens per bus, change accordingly.
+    """
+    return np.eye(num_buses, dtype=float)
+
+
+
 def compute_dc_pf_flows(theta: np.ndarray, branches, base_mva: float = 100.0) -> np.ndarray:
     """
     Compute branch flows f_ij = base_mva/x * (theta_i - theta_j) in MW,
@@ -41,6 +67,20 @@ def compute_dc_pf_flows(theta: np.ndarray, branches, base_mva: float = 100.0) ->
 
 def main():
     out_dir = Path("data_ieee14")
+    out_dir.mkdir(exist_ok=True)
+
+    mode = "both"   # "pf" | "opf" | "both"
+
+    out_dir = Path("data_ieee14")
+    if mode == "pf":
+        out_dir = Path("data_ieee14_pf")
+    elif mode == "opf":
+        out_dir = Path("data_ieee14_opf")
+    elif mode == "both":
+        out_dir = Path("data_ieee14_both")
+    else:
+        raise ValueError(f"Unknown mode: {mode}")
+
     out_dir.mkdir(exist_ok=True)
 
     # ----------------------------
@@ -97,7 +137,7 @@ def main():
     # ----------------------------
     # We set p_nom to a consistent thermal limit for normalization
     # If you want tighter constraints, reduce p_nom (e.g. 50).
-    p_nom_link = 100.0
+    p_nom_link = 50.0
     links_df = pd.DataFrame(
         {
             "bus0": [f"Bus{i}" for (i, j, x) in branches],
@@ -131,7 +171,7 @@ def main():
     # ----------------------------
     # time index
     # ----------------------------
-    time_index = pd.date_range("2020-01-01", periods=T, freq="H")
+    time_index = pd.date_range("2020-01-01", periods=T, freq="h")
 
     # ----------------------------
     # demand: loads-p_set.csv columns must be "{bus} total_demand"
@@ -164,75 +204,137 @@ def main():
     Bred = Bbus[np.ix_(mask, mask)]
 
     # ----------------------------
-    # Generate generation + flows consistent with DC PF
+    # Build DC OPF (PTDF) matrices (fixed topology)
     # ----------------------------
-    gen = np.zeros((T, N), dtype=float)
-    flows = np.zeros((T, L), dtype=float)
+    A = build_incidence(N, branches)  # (L, N)
+    b = np.array([base_mva / x for (_, _, x) in branches], dtype=float)  # (L,)
+    f_max = np.full(L, p_nom_link, dtype=float)  # (L,)
 
-    # helper bounds
+    topo = DcOpfTopology(n_b=N, n_l=L, slack=slack, A=A, b=b, f_max=f_max)
+    PTDF = topo.ptdf()
+
+    # one generator per bus in your toy data
+    G = build_gen_map(N)  # (N, N)
+
+    # DC-OPF costs and pmin
+    pmin = np.zeros(N, dtype=float)
+    c = np.linspace(10.0, 50.0, N).astype(float)  # simple fixed merit order
+
+
+
+    # ----------------------------
+    # Generate samples
+    # ----------------------------
+    if mode in ("pf", "both"):
+        gen_pf = np.zeros((T, N), dtype=float)
+        flows_pf = np.zeros((T, L), dtype=float)
+
+    if mode in ("opf", "both"):
+        gen_opf = np.zeros((T, N), dtype=float)
+        flows_opf = np.zeros((T, L), dtype=float)
+
     gmax = p_nom_gen
 
     for t in range(T):
         d = demand[t].copy()
 
-        # We'll sample non-slack generation from weather, and let slack balance.
-        # Resample if slack goes out of bounds or any branch exceeds p_nom_link.
-        for _ in range(50):
-            # non-slack gen: fraction of available (cf * p_nom)
-            g = np.zeros(N, dtype=float)
+        # ===== PF generation (your existing logic) =====
+        if mode in ("pf", "both"):
+            for _ in range(50):
+                g = np.zeros(N, dtype=float)
+                beta = rng.uniform(0.3, 0.95, size=N)
 
-            # sample beta in [0.3, 0.95] so there is structure but not always maxed
-            beta = rng.uniform(0.3, 0.95, size=N)
+                for i in range(1, N):
+                    g[i] = beta[i] * cf[t, i] * gmax[i]
 
-            # for buses 2..14 (non-slack)
-            for i in range(1, N):
-                g[i] = beta[i] * cf[t, i] * gmax[i]
+                g[slack] = float(np.sum(d) - np.sum(g[1:]))
 
-            # slack balances to meet total demand
-            g[slack] = float(np.sum(d) - np.sum(g[1:]))
+                if not (0.0 <= g[slack] <= gmax[slack]):
+                    continue
 
-            # enforce generator bounds
-            if not (0.0 <= g[slack] <= gmax[slack]):
-                continue
+                P = g - d
+                Pred = P[mask]
+                try:
+                    thetared = np.linalg.solve(Bred, Pred)
+                except np.linalg.LinAlgError:
+                    continue
 
-            # net injections P = G - D (MW)
-            P = g - d
+                theta = np.zeros(N, dtype=float)
+                theta[mask] = thetared
+                theta[slack] = 0.0
 
-            # solve theta: B * theta = P with slack fixed to 0
-            Pred = P[mask]
+                f = compute_dc_pf_flows(theta, branches, base_mva=base_mva)
+
+                if np.max(np.abs(f)) > p_nom_link:
+                    continue
+
+                gen_pf[t, :] = g
+                flows_pf[t, :] = f
+                break
+            else:
+                gen_pf[t, :] = 0.0
+                gen_pf[t, slack] = float(np.sum(d))
+                flows_pf[t, :] = 0.0
+
+        # ===== OPF generation =====
+        if mode in ("opf", "both"):
+            # availability-limited max dispatch from cf * p_nom
+            pmax_t = cf[t, :] * p_nom_gen
+
             try:
-                thetared = np.linalg.solve(Bred, Pred)
-            except np.linalg.LinAlgError:
-                continue
+                pg, pinj, f = solve_dcopf_ptdf(
+                    topo=topo,
+                    PTDF=PTDF,
+                    d=d,
+                    G=G,
+                    c=c,
+                    pmin=pmin,
+                    pmax=pmax_t,
+                    include_line_limits=True,
+                )
 
-            theta = np.zeros(N, dtype=float)
-            theta[mask] = thetared
-            theta[slack] = 0.0
+                # ---------- QUICK SANITY CHECK (run once) ----------
+                if t == 0:
+                    print("=== DC-OPF sanity check (t=0) ===")
+                    print("Balance residual (sum pinj):", pinj.sum())
+                    print("Total load:", d.sum(), "Total generation:", pg.sum())
+                    print("Max line violation:", np.max(np.abs(f) - topo.f_max))
+                    print("Max |flow|:", np.max(np.abs(f)))
+                    print("================================")
+                # --------------------------------------------------
 
-            f = compute_dc_pf_flows(theta, branches, base_mva=base_mva)
+                gen_opf[t, :] = pg
+                flows_opf[t, :] = f
+            except Exception:
+                gen_opf[t, :] = 0.0
+                gen_opf[t, slack] = float(np.sum(d))
+                flows_opf[t, :] = 0.0
 
-            # enforce thermal limits
-            if np.max(np.abs(f)) > p_nom_link:
-                continue
-
-            # success
-            gen[t, :] = g
-            flows[t, :] = f
-            break
-        else:
-            # fallback (rare): zero flows, slack supplies all
-            gen[t, :] = 0.0
-            gen[t, slack] = float(np.sum(d))
-            flows[t, :] = 0.0
 
     # ----------------------------
-    # Save generators_t_p.csv and linkf.csv
+    # Save outputs
     # ----------------------------
-    gen_ts = pd.DataFrame(gen, index=time_index, columns=gen_names)
-    gen_ts.to_csv(out_dir / "generators_t_p.csv")
+    if mode == "pf":
+        pd.DataFrame(gen_pf, index=time_index, columns=gen_names).to_csv(out_dir / "generators_t_p.csv")
+        pd.DataFrame(flows_pf, index=time_index, columns=link_names).to_csv(out_dir / "linkf.csv")
 
-    flow_ts = pd.DataFrame(flows, index=time_index, columns=link_names)
-    flow_ts.to_csv(out_dir / "linkf.csv")
+    elif mode == "opf":
+        pd.DataFrame(gen_opf, index=time_index, columns=gen_names).to_csv(out_dir / "generators_t_p.csv")
+        pd.DataFrame(flows_opf, index=time_index, columns=link_names).to_csv(out_dir / "linkf.csv")
+
+    elif mode == "both":
+        # keep the same topology files in this folder, but store time series separately
+        pf_dir = out_dir / "pf"
+        opf_dir = out_dir / "opf"
+        pf_dir.mkdir(exist_ok=True)
+        opf_dir.mkdir(exist_ok=True)
+
+        pd.DataFrame(gen_pf, index=time_index, columns=gen_names).to_csv(pf_dir / "generators_t_p.csv")
+        pd.DataFrame(flows_pf, index=time_index, columns=link_names).to_csv(pf_dir / "linkf.csv")
+
+        pd.DataFrame(gen_opf, index=time_index, columns=gen_names).to_csv(opf_dir / "generators_t_p.csv")
+        pd.DataFrame(flows_opf, index=time_index, columns=link_names).to_csv(opf_dir / "linkf.csv")
+
 
     # ----------------------------
     # stores_t_e.csv (dummy)
