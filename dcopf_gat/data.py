@@ -89,9 +89,11 @@ def prepare_dataset(
     demand = raw["demand"]
     flow = raw["flow"]
     links = raw["links"]
+    soc = raw["soc"]
     gen_setting = raw["gen_setting"]
     buses = raw["buses"]
     nodes_orig = raw["nodes_orig"].values  # array of node names
+
 
     # Basic dimensions
     nodes = buses.index.values
@@ -212,6 +214,30 @@ def prepare_dataset(
         flow_target = flow_pca.astype(np.float32)
         output_weight = weight_pc.astype(np.float32)
 
+
+    # ----------------------------
+    # Storage SoC -> node feature
+    # Expect columns like "Store0@Bus1". We map SoC to the corresponding bus.
+    # If no "@Bus" info exists (old dummy datasets), we keep zeros.
+    # ----------------------------
+    soc = soc.reindex(index=p_t.index)  # align time index
+    soc_bus = np.zeros((soc.shape[0], num_nodes_orig), dtype=np.float32)
+
+    for col in soc.columns:
+        if "@Bus" in col:
+            bus_name = col.split("@")[-1]          # e.g. "Bus1"
+            if bus_name in bus_to_orig:
+                j = bus_to_orig[bus_name]          # node index in nodes_orig order
+                soc_bus[:, j] = soc[col].to_numpy(dtype=np.float32)
+
+    # normalize SoC feature to [0,1] using its max (robust even if constant)
+    soc_max = float(np.max(soc_bus)) if soc_bus.size else 0.0
+    if soc_max > 0:
+        soc_bus = soc_bus / soc_max
+
+    soc_nodes = soc_bus[:, :, None]  # (T, num_nodes_orig, 1)
+
+
     # build input and output tensors
     # X: [T, num_nodes_orig, features=(weather + demand)]
     # here we broadcast weather features per node; notebook did something similar.
@@ -220,7 +246,7 @@ def prepare_dataset(
     # repeat same weather features for all nodes_orig
     weather_nodes = np.repeat(weather_input[:, None, :], num_nodes_orig, axis=1)
     demand_nodes = demand_norm[:, :, None]  # [T, num_nodes_orig, 1]
-    X = np.concatenate([weather_nodes, demand_nodes], axis=-1).astype(np.float32)
+    X = np.concatenate([weather_nodes, demand_nodes, soc_nodes], axis=-1).astype(np.float32)
 
     # Y: [T, num_nodes_orig + num_links]
     Y_gen = gen_bus_norm.astype(np.float32)
@@ -261,6 +287,7 @@ def prepare_dataset(
         "link_edges": link_edges,  # <-- NEW
         "pca": pca,
         "output_weight": output_weight,
+        "soc_max": np.float32(soc_max),
     }
 
     return train_x, train_y, val_x, val_y, test_x, test_y, meta
