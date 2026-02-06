@@ -68,6 +68,8 @@ def parse_args():
         help="Temporal lookback window (0 = static). Concatenates [t-window..t] into features.",
     )
 
+    p.add_argument("--debug", action="store_true", help="Run in debug mode")
+    
     return p.parse_args()
 
 
