@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import tensorflow as tf
 
-from dcopf_gat.train import build_model_from_meta
+from dcopf_gat.architectures.common import build_gat_from_meta as build_model_from_meta
 from dcopf_gat.data import prepare_dataset
 
 
