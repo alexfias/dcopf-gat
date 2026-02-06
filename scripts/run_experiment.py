@@ -61,6 +61,13 @@ def parse_args():
         help="Architecture name (used for logging & comparison)",
     )
 
+    p.add_argument(
+        "--window",
+        type=int,
+        default=0,
+        help="Temporal lookback window (0 = static). Concatenates [t-window..t] into features.",
+    )
+
     return p.parse_args()
 
 
@@ -89,7 +96,8 @@ def main():
         batch_size=args.batch_size,
         epochs=args.epochs,
         arch_name=args.arch,
-        use_tfdata=True,   # <-- Step 4 enabled here
+        use_tfdata=True,   
+        window=args.window,
     )
 
     # -------- logging --------

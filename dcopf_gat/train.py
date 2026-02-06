@@ -16,6 +16,9 @@ import json
 import numpy as np
 import time
 
+from .windowing import make_windows_concat
+
+
 
 def build_model_from_meta(meta: Dict[str, Any], lamb: float = 0.001) -> keras.Model:
     num_nodes_orig = meta["num_nodes_orig"]
@@ -59,9 +62,11 @@ def run_experiment(
     batch_size: int = 32,
     epochs: int = 200,
     seed: int = 1234,
+    window: int = 0,
     use_tfdata: bool = True,
     arch_name: str = "gat_flow_lqat",
     lamb: float = 0.001,
+    debug: bool = False,
 ) -> Tuple[keras.Model, keras.callbacks.History, Tuple, Dict[str, float]]:
     set_global_seed(seed)
 
@@ -72,6 +77,22 @@ def run_experiment(
         data_dir, pca_flag=False, train_fraction=0.8, seed=seed
     )
 
+    if window and window > 1:
+        train_x, train_y = make_windows_concat(train_x, train_y, window=window)
+        val_x, val_y = make_windows_concat(val_x, val_y, window=window)
+        test_x, test_y = make_windows_concat(test_x, test_y, window=window)
+    else:
+        window == 0 #or 1 => no windowing
+        pass
+
+    if debug:
+        print("after windowing train_x:", train_x.shape, "val_x:", val_x.shape)
+
+        if use_tfdata:
+            xb, yb = next(iter(make_dataset(train_x, train_y, batch_size=32, shuffle=True)))
+            print("dataset batch xb:", xb.shape, xb.dtype)
+            print("dataset batch yb:", yb.shape, yb.dtype)
+
     model = build_model_from_meta(meta, lamb=lamb)
 
     config = {
@@ -81,6 +102,7 @@ def run_experiment(
         "epochs": epochs,
         "lambda": lamb,
         "use_tfdata": use_tfdata,
+        "window": window,
     }
     with open(run_dir / "config.json", "w") as f:
         json.dump(config, f, indent=2)
@@ -91,6 +113,15 @@ def run_experiment(
     model.compile(
         optimizer=keras.optimizers.Adam(learning_rate=learning_rate),
     )
+
+    w0 = [w.numpy().copy() for w in model.trainable_weights]
+
+    print("\n[TEST 2]")
+    print("Num trainable tensors:", len(w0))
+    print("Learning rate:",
+          float(tf.keras.backend.get_value(model.optimizer.learning_rate)))
+    print("Optimizer iterations (before):",
+          int(model.optimizer.iterations.numpy()))
 
     early_stop = keras.callbacks.EarlyStopping(
         monitor="val_R2",
@@ -111,13 +142,23 @@ def run_experiment(
         train_ds = make_dataset(train_x, train_y, batch_size=batch_size, shuffle=True)
         val_ds = make_dataset(val_x, val_y, batch_size=batch_size, shuffle=False)
 
-        history = model.fit(
-            train_ds,
-            epochs=epochs,
-            validation_data=val_ds,
-            callbacks=[early_stop, checkpoint],
-            verbose=2,
-        )
+        if debug:
+            history = model.fit(
+                train_ds,
+                epochs=1,
+                steps_per_epoch=5,
+                verbose=2,
+                callbacks=[],  # important
+            )
+
+        else: history = model.fit(
+                train_ds,
+                epochs=epochs,
+                validation_data=val_ds,
+                callbacks=[early_stop, checkpoint],
+                verbose=2,
+            )
+
     else:
         history = model.fit(
             x=train_x,
@@ -128,6 +169,20 @@ def run_experiment(
             callbacks=[early_stop, checkpoint],
             verbose=2,
         )
+
+    w1 = [w.numpy().copy() for w in model.trainable_weights]
+
+    deltas = [
+        float(np.mean((a - b) ** 2))
+        for a, b in zip(w1, w0)
+    ]
+
+    print("Mean squared delta per tensor (first 10):", deltas[:10])
+    print("Any weight changed?:", any(d > 0 for d in deltas))
+    print("Optimizer iterations (after):",
+          int(model.optimizer.iterations.numpy()))
+    print("==========================================\n")
+
 
     np.save(run_dir / "history.npy", history.history)
 
