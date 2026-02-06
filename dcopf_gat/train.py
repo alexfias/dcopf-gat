@@ -12,6 +12,10 @@ from .model import GraphAttentionNetwork
 from .utils import set_global_seed
 from .data_pipeline import make_dataset
 
+import json
+import numpy as np
+import time
+
 
 def build_model_from_meta(meta: Dict[str, Any], lamb: float = 0.001) -> keras.Model:
     num_nodes_orig = meta["num_nodes_orig"]
@@ -56,14 +60,30 @@ def run_experiment(
     epochs: int = 200,
     seed: int = 1234,
     use_tfdata: bool = True,
+    arch_name: str = "gat_flow_lqat",
+    lamb: float = 0.001,
 ) -> Tuple[keras.Model, keras.callbacks.History, Tuple, Dict[str, float]]:
     set_global_seed(seed)
+
+    run_dir = Path("runs") / Path(data_dir).name / arch_name
+    run_dir.mkdir(parents=True, exist_ok=True)
 
     train_x, train_y, val_x, val_y, test_x, test_y, meta = prepare_dataset(
         data_dir, pca_flag=False, train_fraction=0.8, seed=seed
     )
 
-    model = build_model_from_meta(meta, lamb=0.001)
+    model = build_model_from_meta(meta, lamb=lamb)
+
+    config = {
+        "architecture": arch_name,
+        "learning_rate": learning_rate,
+        "batch_size": batch_size,
+        "epochs": epochs,
+        "lambda": lamb,
+        "use_tfdata": use_tfdata,
+    }
+    with open(run_dir / "config.json", "w") as f:
+        json.dump(config, f, indent=2)
 
     # Build model by calling once (subclassed model)
     _ = model(tf.convert_to_tensor(train_x[:1], dtype=tf.float32))
@@ -73,9 +93,18 @@ def run_experiment(
     )
 
     early_stop = keras.callbacks.EarlyStopping(
-        monitor="val_loss",
+        monitor="val_R2",
+        mode="max",
         patience=50,
         restore_best_weights=True,
+    )
+
+    checkpoint = keras.callbacks.ModelCheckpoint(
+        filepath=run_dir / "model_best.weights.h5",
+        monitor="val_R2",
+        mode="max",
+        save_best_only=True,
+        save_weights_only=True,
     )
 
     if use_tfdata:
@@ -86,7 +115,7 @@ def run_experiment(
             train_ds,
             epochs=epochs,
             validation_data=val_ds,
-            callbacks=[early_stop],
+            callbacks=[early_stop, checkpoint],
             verbose=2,
         )
     else:
@@ -96,10 +125,18 @@ def run_experiment(
             batch_size=batch_size,
             epochs=epochs,
             validation_data=(val_x, val_y),
-            callbacks=[early_stop],
+            callbacks=[early_stop, checkpoint],
             verbose=2,
         )
 
+    np.save(run_dir / "history.npy", history.history)
+
     # Return dict for easier downstream logging
     test_metrics = model.evaluate(test_x, test_y, verbose=0, return_dict=True)
+
+    with open(run_dir / "metrics_test.json", "w") as f:
+        json.dump({k: float(v) for k, v in test_metrics.items()}, f, indent=2)
+
+    model.save_weights(run_dir / "model_final.weights.h5")
+
     return model, history, (test_x, test_y), test_metrics

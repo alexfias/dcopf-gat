@@ -54,6 +54,13 @@ def parse_args():
         help="Adam learning rate",
     )
 
+    p.add_argument(
+        "--arch",
+        type=str,
+        default="gat_flow_lqat",
+        help="Architecture name (used for logging & comparison)",
+    )
+
     return p.parse_args()
 
 
@@ -81,6 +88,7 @@ def main():
         learning_rate=args.learning_rate,
         batch_size=args.batch_size,
         epochs=args.epochs,
+        arch_name=args.arch,
         use_tfdata=True,   # <-- Step 4 enabled here
     )
 
