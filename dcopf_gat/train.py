@@ -48,8 +48,15 @@ def run_experiment(
     run_dir.mkdir(parents=True, exist_ok=True)
 
     # ---- Load dataset once ----
+    # A/B: no SoC in inputs; C/D/E: SoC included
+    include_soc_feature = arch_name in {"C", "D", "E"}  # extend if needed
+
     train_x, train_y, val_x, val_y, test_x, test_y, meta = prepare_dataset(
-        data_dir, pca_flag=False, train_fraction=0.8, seed=seed
+        data_dir,
+        pca_flag=False,
+        train_fraction=0.8,
+        seed=seed,
+        include_soc_feature=include_soc_feature,
     )
 
     # ---- Build unified config ----

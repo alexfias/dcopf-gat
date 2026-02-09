@@ -71,7 +71,9 @@ def prepare_dataset(
     steps_per_window: int = 2,
     train_fraction: float = 0.95,
     seed: int = 1234,
+    include_soc_feature: bool = False,   # <-- NEW (default: A-like)
 ):
+
     """
     High-level helper that:
       - loads data
@@ -246,7 +248,20 @@ def prepare_dataset(
     # repeat same weather features for all nodes_orig
     weather_nodes = np.repeat(weather_input[:, None, :], num_nodes_orig, axis=1)
     demand_nodes = demand_norm[:, :, None]  # [T, num_nodes_orig, 1]
-    X = np.concatenate([weather_nodes, demand_nodes, soc_nodes], axis=-1).astype(np.float32)
+    # Keep demand as the LAST feature because model.py uses: demand = node_states[:, :, -1]
+    # ---------------------------------------------------------
+    # Build input tensor X
+    # Keep DEMAND as the LAST feature because model.py does:
+    #   demand = node_states[:, :, -1]
+    #
+    # Ladder:
+    #   - A/B: include_soc_feature=False -> X = [weather..., demand]
+    #   - C/D/E: include_soc_feature=True -> X = [weather..., soc, demand]
+    # ---------------------------------------------------------
+    if include_soc_feature:
+        X = np.concatenate([weather_nodes, soc_nodes, demand_nodes], axis=-1).astype(np.float32)
+    else:
+        X = np.concatenate([weather_nodes, demand_nodes], axis=-1).astype(np.float32)
 
     # Y: [T, num_nodes_orig + num_links]
     Y_gen = gen_bus_norm.astype(np.float32)

@@ -92,19 +92,21 @@ def main():
         )
 
     # -------- run experiment --------
-    model, history, (test_x, test_y), test_metrics = run_experiment(
+    models, histories, (test_x, test_y), test_metrics = run_experiment(
         data_dir=str(data_dir),
         learning_rate=args.learning_rate,
         batch_size=args.batch_size,
         epochs=args.epochs,
         arch_name=args.arch,
-        use_tfdata=True,   
+        use_tfdata=True,
         window=args.window,
     )
 
     # -------- logging --------
     print("\n================ MODEL SUMMARY ================\n")
-    model.summary()
+    for name, m in models.items():
+        print(f"\n--- {name} ---")
+        m.summary()
     print("\n==============================================\n")
 
     print("Test metrics:")
