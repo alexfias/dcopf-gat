@@ -2,6 +2,7 @@
 from __future__ import annotations
 import numpy as np
 
+
 def make_windows_concat(x: np.ndarray, y: np.ndarray, window: int):
     """
     Concatenate a lookback window into the feature axis.
@@ -31,13 +32,13 @@ def make_windows_concat(x: np.ndarray, y: np.ndarray, window: int):
 
     xs = []
     for t in range(window, T):
-        # collect [t-window, ..., t] and concat features
         xcat = np.concatenate([x[t - i] for i in range(window, -1, -1)], axis=-1)
         xs.append(xcat)
 
     xw = np.stack(xs, axis=0)
     yw = y[window:]
     return xw, yw
+
 
 def make_windows_sequence(x: np.ndarray, y: np.ndarray, window: int):
     """
@@ -68,11 +69,9 @@ def make_windows_sequence(x: np.ndarray, y: np.ndarray, window: int):
 
     xs = []
     for t in range(window, T):
-        # sequence: [t-window, ..., t]
-        xseq = x[t - window : t + 1]  # shape (window+1, N, F)
+        xseq = x[t - window : t + 1]
         xs.append(xseq)
 
-    xw = np.stack(xs, axis=0)   # (T-window, window+1, N, F)
-    yw = y[window:]             # (T-window, Y)
-
+    xw = np.stack(xs, axis=0)
+    yw = y[window:]
     return xw, yw

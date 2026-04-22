@@ -57,7 +57,7 @@ def parse_args():
     p.add_argument(
         "--arch",
         type=str,
-        default="gat_flow_lqat",
+        default="A",
         help="Architecture name (used for logging & comparison)",
     )
 

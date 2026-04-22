@@ -1,0 +1,89 @@
+configfile: "config.yaml"
+
+from pathlib import Path
+
+
+ARCHES = config["arches"]
+WINDOW_MODES = config["window_modes"]
+WINDOWS = [str(w) for w in config["windows"]]
+LEARNING_RATES = [str(lr) for lr in config["learning_rates"]]
+OUTPUT_ROOT = config["output_root"]
+
+
+def valid_combo(arch, window, window_mode):
+    w = int(window)
+    if arch in {"A", "C"} and w > 0:
+        return False
+    if arch in {"E", "F"} and window_mode == "past" and w <= 1:
+        return False
+    if arch in {"E", "F"} and window_mode == "centered" and w <= 0:
+        return False
+    return True
+
+
+VALID_COMBOS = [
+    (window_mode, arch, window, learning_rate)
+    for window_mode in WINDOW_MODES
+    for arch in ARCHES
+    for window in WINDOWS
+    for learning_rate in LEARNING_RATES
+    if valid_combo(arch, window, window_mode)
+]
+
+
+def combo_csv(wildcards):
+    return f"{OUTPUT_ROOT}/{wildcards.window_mode}/{wildcards.arch}/window_{wildcards.window}/lr_{wildcards.learning_rate}.csv"
+
+
+def combo_png(wildcards):
+    return f"{OUTPUT_ROOT}/{wildcards.window_mode}/{wildcards.arch}/window_{wildcards.window}/lr_{wildcards.learning_rate}.png"
+
+
+rule all:
+    input:
+        f"{OUTPUT_ROOT}/benchmark_all.csv",
+
+
+rule benchmark_setting:
+    output:
+        csv=combo_csv,
+        png=combo_png,
+    params:
+        data_dir=config["data_dir"],
+        epochs=config["epochs"],
+        batch_size=config["batch_size"],
+        seed=config["seed"],
+    shell:
+        """
+        python scripts/benchmark_temporal_arches.py \
+          --data_dir {params.data_dir} \
+          --arches {wildcards.arch} \
+          --windows {wildcards.window} \
+          --learning_rates {wildcards.learning_rate} \
+          --window_mode {wildcards.window_mode} \
+          --epochs {params.epochs} \
+          --batch_size {params.batch_size} \
+          --seed {params.seed} \
+          --output_csv {output.csv} \
+          --plot_png {output.png}
+        """
+
+
+rule aggregate:
+    input:
+        expand(
+            f"{OUTPUT_ROOT}" + "/{window_mode}/{arch}/window_{window}/lr_{learning_rate}.csv",
+            zip,
+            window_mode=[x[0] for x in VALID_COMBOS],
+            arch=[x[1] for x in VALID_COMBOS],
+            window=[x[2] for x in VALID_COMBOS],
+            learning_rate=[x[3] for x in VALID_COMBOS],
+        )
+    output:
+        f"{OUTPUT_ROOT}/benchmark_all.csv"
+    shell:
+        """
+        python scripts/aggregate_benchmark_results.py \
+          --inputs {input} \
+          --output {output}
+        """

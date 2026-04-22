@@ -19,6 +19,7 @@ from .architectures import arch_b  # noqa: F401
 from .architectures import arch_c  # noqa: F401
 from .architectures import arch_d  # noqa: F401
 from .architectures import arch_e  # noqa: F401
+from .architectures import arch_f  # noqa: F401
 
 
 def run_experiment(
@@ -29,7 +30,7 @@ def run_experiment(
     seed: int = 1234,
     window: int = 0,
     use_tfdata: bool = True,
-    arch_name: str = "A",        # <-- architecture key: "A", "B", "C", ...
+    arch_name: str = "A",
     lamb: float = 0.001,
     debug: bool = False,
 ) -> Tuple[dict, dict, Tuple, Dict[str, float]]:
@@ -47,9 +48,7 @@ def run_experiment(
     run_dir = Path("runs") / Path(data_dir).name / arch_name
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    # ---- Load dataset once ----
-    # A/B: no SoC in inputs; C/D/E: SoC included
-    include_soc_feature = arch_name in {"C", "D", "E"}  # extend if needed
+    include_soc_feature = arch_name in {"C", "D", "E", "F"}
 
     train_x, train_y, val_x, val_y, test_x, test_y, meta = prepare_dataset(
         data_dir,
@@ -59,7 +58,6 @@ def run_experiment(
         include_soc_feature=include_soc_feature,
     )
 
-    # ---- Build unified config ----
     cfg = TrainConfig(
         arch=arch_name,
         learning_rate=learning_rate,
@@ -72,17 +70,13 @@ def run_experiment(
         debug=debug,
     )
 
-    # Save config early for reproducibility
     with open(run_dir / "config.json", "w") as f:
         json.dump(cfg.__dict__, f, indent=2)
 
-    # ---- Choose architecture ----
     if cfg.arch not in ARCH_REGISTRY:
         raise ValueError(f"Unknown arch '{cfg.arch}'. Available: {sorted(ARCH_REGISTRY)}")
 
     arch = ARCH_REGISTRY[cfg.arch](cfg, meta)
-
-    # ---- Architecture-specific preprocessing ----
     train, val, test = arch.prepare_data(train_x, train_y, val_x, val_y, test_x, test_y)
 
     if cfg.debug:
@@ -91,12 +85,10 @@ def run_experiment(
         print("[DEBUG] val_x:", vx.shape, "val_y:", vy.shape)
         print("[DEBUG] test_x:", sx.shape, "test_y:", sy.shape)
 
-    # ---- Build / train / evaluate ----
     models = arch.build()
     histories = arch.fit(models=models, train=train, val=val, run_dir=run_dir)
     test_metrics = arch.evaluate(models=models, test=test)
 
-    # ---- Save artifacts ----
     np.save(run_dir / "history.npy", histories)
     with open(run_dir / "metrics_test.json", "w") as f:
         json.dump({k: float(v) for k, v in test_metrics.items()}, f, indent=2)

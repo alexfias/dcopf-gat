@@ -219,9 +219,9 @@ class LinkQueryAttention(keras.layers.Layer):
     """
     def __init__(
         self,
-        link_edges,          # [L,2] int indices in nodes_orig ordering
-        node_pe=None,        # [N,Cn] or None
-        link_pe=None,        # [L,Ce] or None
+        link_edges,
+        node_pe=None,
+        link_pe=None,
         key_dim=64,
         value_dim=128,
         num_heads=4,
@@ -266,54 +266,47 @@ class LinkQueryAttention(keras.layers.Layer):
         self.attn_drop = keras.layers.Dropout(self.dropout)
 
     def _split_heads(self, x, head_dim):
-        # x: [B, T, H*D] -> [B, H, T, D]
         B = tf.shape(x)[0]
         T = tf.shape(x)[1]
         x = tf.reshape(x, [B, T, self.num_heads, head_dim])
         return tf.transpose(x, [0, 2, 1, 3])
 
     def call(self, node_states, training=False):
-        """
-        node_states: [B, N, F]
-        return:      [B, L, value_dim]
-        """
         B = tf.shape(node_states)[0]
 
-        # Keys/values come from all nodes (+ node PE)
         kv = node_states
         if self.node_pe is not None:
-            node_pe_ext = tf.repeat(tf.expand_dims(self.node_pe, axis=0), B, axis=0)  # [B,N,Cn]
-            kv = tf.concat([kv, node_pe_ext], axis=-1)  # [B,N,F+Cn]
+            node_pe_ext = tf.repeat(tf.expand_dims(self.node_pe, axis=0), B, axis=0)
+            kv = tf.concat([kv, node_pe_ext], axis=-1)
 
-        # Queries come from link endpoints (+ link PE)
         src = self.link_edges[:, 0]
         dst = self.link_edges[:, 1]
-        h_src = tf.gather(node_states, src, axis=1)  # [B,L,F]
-        h_dst = tf.gather(node_states, dst, axis=1)  # [B,L,F]
-        q_in = tf.concat([h_src, h_dst], axis=-1)    # [B,L,2F]
+        h_src = tf.gather(node_states, src, axis=1)
+        h_dst = tf.gather(node_states, dst, axis=1)
+        q_in = tf.concat([h_src, h_dst], axis=-1)
 
         if self.link_pe is not None:
-            link_pe_ext = tf.repeat(tf.expand_dims(self.link_pe, axis=0), B, axis=0)  # [B,L,Ce]
-            q_in = tf.concat([q_in, link_pe_ext], axis=-1)  # [B,L,2F+Ce]
+            link_pe_ext = tf.repeat(tf.expand_dims(self.link_pe, axis=0), B, axis=0)
+            q_in = tf.concat([q_in, link_pe_ext], axis=-1)
 
-        Q = self.q_proj(q_in)  # [B,L,H*key_dim]
-        K = self.k_proj(kv)    # [B,N,H*key_dim]
-        V = self.v_proj(kv)    # [B,N,H*value_dim]
+        Q = self.q_proj(q_in)
+        K = self.k_proj(kv)
+        V = self.v_proj(kv)
 
-        Qh = self._split_heads(Q, self.key_dim)      # [B,H,L,key_dim]
-        Kh = self._split_heads(K, self.key_dim)      # [B,H,N,key_dim]
-        Vh = self._split_heads(V, self.value_dim)    # [B,H,N,value_dim]
+        Qh = self._split_heads(Q, self.key_dim)
+        Kh = self._split_heads(K, self.key_dim)
+        Vh = self._split_heads(V, self.value_dim)
 
         scale = tf.cast(self.key_dim, tf.float32) ** -0.5
-        scores = tf.matmul(Qh, Kh, transpose_b=True) * scale  # [B,H,L,N]
-        attn = tf.nn.softmax(scores, axis=-1)                 # [B,H,L,N]
+        scores = tf.matmul(Qh, Kh, transpose_b=True) * scale
+        attn = tf.nn.softmax(scores, axis=-1)
         attn = self.attn_drop(attn, training=training)
 
-        ctx = tf.matmul(attn, Vh)  # [B,H,L,value_dim]
-        ctx = tf.transpose(ctx, [0, 2, 1, 3])  # [B,L,H,value_dim]
-        ctx = tf.reshape(ctx, [B, tf.shape(ctx)[1], self.num_heads * self.value_dim])  # [B,L,H*value_dim]
+        ctx = tf.matmul(attn, Vh)
+        ctx = tf.transpose(ctx, [0, 2, 1, 3])
+        ctx = tf.reshape(ctx, [B, tf.shape(ctx)[1], self.num_heads * self.value_dim])
 
-        return self.out_proj(ctx)  # [B,L,value_dim]
+        return self.out_proj(ctx)
 
 
 class GraphAttentionNetwork(keras.Model):
@@ -323,7 +316,7 @@ class GraphAttentionNetwork(keras.Model):
         num_links,
         node_pe_orig,
         link_pe,
-        link_edges,   # <-- NEW (required for Level-B decoder)
+        link_edges,
         edge_list,
         g_max,
         d_max,
@@ -355,10 +348,9 @@ class GraphAttentionNetwork(keras.Model):
             for _ in range(num_layers)
         ]
 
-        # Level-B NLAT-like link-query attention decoder
         self.decoder_layer = LinkQueryAttention(
             link_edges=link_edges,
-            node_pe=node_pe_orig,   # keep PE as optional extra signal
+            node_pe=node_pe_orig,
             link_pe=link_pe,
             key_dim=64,
             value_dim=128,
@@ -370,7 +362,7 @@ class GraphAttentionNetwork(keras.Model):
         self.output_layer = keras.layers.Dense(
             1,
             activation=None if pca_obj is not None else keras.activations.tanh,
-            dtype="float32", 
+            dtype="float32",
         )
 
         pca_flag = pca_obj is not None
@@ -397,22 +389,17 @@ class GraphAttentionNetwork(keras.Model):
         self.metric = MyR2("R2")
 
     def call(self, inputs, training=False):
-        node_states = inputs  # [B, N, F]
+        node_states = inputs
         B = tf.shape(node_states)[0]
         node_pe_ext = tf.repeat(tf.expand_dims(self.node_PE, axis=0), B, axis=0)
-
-        # preprocess + add node PE (as before)
         x = tf.concat([self.preprocess(node_states), node_pe_ext], axis=-1)
 
-        # GAT backbone
         for att in self.attention_layers:
             x = att(x)
 
-        # NLAT-like link-query attention decoder
-        context = self.decoder_layer(x, training=training)  # [B, L, value_dim]
-
+        context = self.decoder_layer(x, training=training)
         output = self.MLP(context)
-        return tf.squeeze(self.output_layer(output), axis=-1)  # [B, L]
+        return tf.squeeze(self.output_layer(output), axis=-1)
 
     def train_step(self, data):
         node_states, labels = data
@@ -498,7 +485,6 @@ class GraphAttentionNetworkGRU(keras.Model):
         self.node_PE = tf.cast(node_pe_orig, tf.float32)
         self.gru_units = gru_units
 
-        # NEW: temporal encoder
         self.temporal_gru = keras.layers.GRU(
             gru_units,
             return_sequences=False,
@@ -557,46 +543,32 @@ class GraphAttentionNetworkGRU(keras.Model):
         self.metric = MyR2("R2")
 
     def call(self, inputs, training=False):
-        # inputs: [B, W, N, F]
         node_states = inputs
         B = tf.shape(node_states)[0]
         W = tf.shape(node_states)[1]
         N = tf.shape(node_states)[2]
         F = tf.shape(node_states)[3]
 
-        # [B, W, N, F] -> [B, N, W, F]
         x = tf.transpose(node_states, perm=[0, 2, 1, 3])
-
-        # [B, N, W, F] -> [B*N, W, F]
         x = tf.reshape(x, [B * N, W, F])
-
-        # GRU over time for each node
-        x = self.temporal_gru(x)  # [B*N, gru_units]
-
-        # [B*N, H] -> [B, N, H]
+        x = self.temporal_gru(x)
         x = tf.reshape(x, [B, N, self.gru_units])
 
-        # add node positional encoding
         node_pe_ext = tf.repeat(tf.expand_dims(self.node_PE, axis=0), B, axis=0)
-
-        # preprocess + add node PE
         x = tf.concat([self.preprocess(x), node_pe_ext], axis=-1)
 
-        # GAT backbone
         for att in self.attention_layers:
             x = att(x)
 
-        # decoder
         context = self.decoder_layer(x, training=training)
-
         output = self.MLP(context)
-        return tf.squeeze(self.output_layer(output), axis=-1)  # [B, L]
+        return tf.squeeze(self.output_layer(output), axis=-1)
 
     def train_step(self, data):
         node_states, labels = data
         gene_labels = labels[:, : self.num_nodes_orig]
         flow_labels = labels[:, self.num_nodes_orig :]
-        demand = node_states[:, -1, :, -1]  # last timestep demand
+        demand = node_states[:, -1, :, -1]
 
         with tf.GradientTape() as tape:
             output = self(node_states, training=True)
@@ -627,7 +599,7 @@ class GraphAttentionNetworkGRU(keras.Model):
         node_states, labels = data
         gene_labels = labels[:, : self.num_nodes_orig]
         flow_labels = labels[:, self.num_nodes_orig :]
-        demand = node_states[:, -1, :, -1]  # last timestep demand
+        demand = node_states[:, -1, :, -1]
 
         output = self(node_states, training=False)
         total_loss, resi_loss_flow, cons_loss = self.loss_func.call(

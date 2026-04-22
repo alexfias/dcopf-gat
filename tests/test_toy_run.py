@@ -1,19 +1,23 @@
 import numpy as np
 from pathlib import Path
+import runpy
 
 from dcopf_gat.train import run_experiment
 
 
 def test_toy_3bus_runs_end_to_end():
     data_dir = Path("data_toy_3bus")
-    assert data_dir.exists(), "Toy dataset not found"
+    if not data_dir.exists():
+        runpy.run_path("scripts/generate_toy_dataset.py", run_name="__main__")
 
-    model, history, (test_x, test_y), test_metrics = run_experiment(
+    models, histories, (test_x, test_y), test_metrics = run_experiment(
         data_dir=str(data_dir),
         epochs=3,          # keep test FAST
         batch_size=8,
         learning_rate=1e-3,
     )
+    model = models["main"]
+    history = histories["history_main"]
 
     # ---- basic sanity checks ----
     y_pred = model(test_x, training=False).numpy()
@@ -28,4 +32,4 @@ def test_toy_3bus_runs_end_to_end():
     assert np.isfinite(y_pred).all(), "Model output contains NaNs or infs"
 
     # training history exists
-    assert len(history.history) > 0, "No training history recorded"
+    assert len(history) > 0, "No training history recorded"

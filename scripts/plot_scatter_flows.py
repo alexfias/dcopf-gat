@@ -9,7 +9,7 @@ from dcopf_gat.data import prepare_dataset
 
 # -------- paths --------
 data_dir = "data_ieee14_opf_storage"
-run_dir = Path("runs") / "data_ieee14_opf_storage" / "gat_flow_lqat"
+run_dir = Path("runs") / "data_ieee14_opf_storage" / "A"
 
 # -------- load data --------
 train_x, train_y, val_x, val_y, test_x, test_y, meta = prepare_dataset(
@@ -45,7 +45,9 @@ plt.xlabel("True line flow")
 plt.ylabel("Predicted line flow")
 plt.title("Predicted vs true line flows (test set)")
 plt.tight_layout()
-plt.show()
+scatter_path = run_dir / "pred_vs_true_scatter_flat.png"
+plt.savefig(scatter_path, dpi=150, bbox_inches="tight")
+plt.close()
 
 
 # -------- compute nodal imbalance --------
@@ -84,4 +86,9 @@ plt.xlabel("Nodal power balance residual")
 plt.ylabel("Density")
 plt.title("Nodal power balance residuals (test set)")
 plt.tight_layout()
-plt.show()
+residual_path = run_dir / "nodal_residual_hist.png"
+plt.savefig(residual_path, dpi=150, bbox_inches="tight")
+plt.close()
+
+print(f"Saved scatter plot to {scatter_path}")
+print(f"Saved residual histogram to {residual_path}")

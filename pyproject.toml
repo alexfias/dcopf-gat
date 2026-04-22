@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dcopf_gat"
+version = "0.1.0"
+description = "Physics-informed graph attention models for DC power flow and DC-OPF surrogates"
+authors = [
+    {name = "dcopf_gat contributors"}
+]
+dependencies = [
+    "numpy<2",
+    "pandas",
+    "scikit-learn",
+    "scipy",
+    "tensorflow",
+    "xarray",
+    "PyYAML",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]

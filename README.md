@@ -97,12 +97,6 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
----
-
-Install the package in editable mode (recommended):
-```bash
-pip install -e .
-```
 
 ## Quick Start (Toy Dataset)
 
@@ -113,11 +107,11 @@ This repository includes a synthetic IEEE-14 DC power flow / DC-OPF dataset gene
 From the repository root:
 
 ```bash
-python make_toy_ieee14.py
+python scripts/make_toy_ieee14.py
 ```
 This creates
 ```bash
-data_toy_ieee14/
+data_ieee14_opf_storage/
 ```
 
 ## Training the Model
@@ -126,7 +120,8 @@ data_toy_ieee14/
 
 ```python
 python -m scripts.run_experiment \
-  --data_dir data_ieee14 \
+  --data_dir data_ieee14_opf_storage \
+  --arch A \
   --batch_size 256 \
   --epochs 50
 
@@ -141,7 +136,8 @@ falls back to CPU otherwise
 GPU mixed precision
 ```python
 python -m scripts.run_experiment \
-  --data_dir data_ieee14 \
+  --data_dir data_ieee14_opf_storage \
+  --arch A \
   --device gpu \
   --mp \
   --batch_size 256 \
@@ -152,8 +148,8 @@ Programmatic Usage
 ```python
 from dcopf_gat.train import run_experiment
 
-model, history, (test_x, test_y), test_metrics = run_experiment(
-    data_dir="data_ieee14",
+models, histories, (test_x, test_y), test_metrics = run_experiment(
+    data_dir="data_ieee14_opf_storage",
     learning_rate=1e-3,
     batch_size=256,
     epochs=50,
@@ -187,8 +183,8 @@ dcopf-gat/
 ├── scripts/
 │   └── run_experiment.py    # Main training entrypoint
 │
-├── make_toy_3bus.py         # 3-bus synthetic dataset
-├── make_toy_ieee14.py       # IEEE-14 synthetic dataset
+├── scripts/generate_toy_dataset.py  # 3-bus synthetic dataset
+├── scripts/make_toy_ieee14.py       # IEEE-14 synthetic dataset
 ├── experiments/             # Jupyter notebooks
 ├── data/                    # Placeholder for real datasets
 ├── README.md
