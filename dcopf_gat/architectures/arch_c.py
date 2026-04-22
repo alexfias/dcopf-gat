@@ -30,6 +30,12 @@ class ArchC(Architecture):
         model = models["main"]
         (train_x, train_y), (val_x, val_y) = train, val
 
+        # 🔍 DEBUG HERE
+        print("TRAIN X:", train_x.shape)
+        print("TRAIN Y:", train_y.shape)
+        print("VAL X:", val_x.shape)
+        print("VAL Y:", val_y.shape)
+
         _ = model(tf.convert_to_tensor(train_x[:1], dtype=tf.float32))
         model.compile(optimizer=keras.optimizers.Adam(self.cfg.learning_rate))
 
