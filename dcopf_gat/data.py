@@ -71,15 +71,15 @@ def prepare_dataset(
     steps_per_window: int = 2,
     train_fraction: float = 0.95,
     seed: int = 1234,
-    include_soc_feature: bool = False,   # <-- NEW (default: A-like)
+    include_soc_feature: bool = False,
 ):
-
     """
     High-level helper that:
       - loads data
       - builds adjacency, PE, incidence matrices
       - normalizes inputs/outputs
-      - does a random train/val/test split
+      - does a chronological train/val/test split
+
     Returns:
       train_x, train_y, val_x, val_y, test_x, test_y, meta
     """
@@ -94,8 +94,7 @@ def prepare_dataset(
     soc = raw["soc"]
     gen_setting = raw["gen_setting"]
     buses = raw["buses"]
-    nodes_orig = raw["nodes_orig"].values  # array of node names
-
+    nodes_orig = raw["nodes_orig"].values
 
     # Basic dimensions
     nodes = buses.index.values
@@ -107,7 +106,6 @@ def prepare_dataset(
     power_precision = 1e-3
     gen_setting_reduced = gen_setting.loc[gen_setting["p_nom"] > power_precision]
     p_t_reduced = p_t.loc[:, gen_setting_reduced.index]
-    # Mask tiny dispatch values
     p_t_reduced = (p_t_reduced > power_precision).astype(int) * p_t_reduced
 
     # Group generators by bus
@@ -115,7 +113,6 @@ def prepare_dataset(
     if "bus" not in gen_setting_reduced.columns:
         raise ValueError("generators.csv must contain a 'bus' column.")
 
-    # reorder generators according to nodes_orig and sum per bus
     gen_bus = p_t_reduced.T
     gen_bus["bus"] = gen_setting_reduced["bus"]
     gen_bus = gen_bus.groupby("bus").sum().T
@@ -127,7 +124,6 @@ def prepare_dataset(
     p_nom_bus = p_nom_reorder["p_nom"].values.astype(np.float32)
 
     # reorder demand by nodes_orig
-    # assume demand columns are f"{bus} total_demand" as in notebook
     demand_cols = [f"{bus} total_demand" for bus in nodes_orig]
     demand_reorder = demand[demand_cols]
 
@@ -137,9 +133,9 @@ def prepare_dataset(
     flow_max = links["p_nom"].values.astype(np.float32)
     flow_norm, _ = minmax_zero_max(flow.values, flow_max)
 
-    # weather: assume already in [0,1], or you can also normalize here
+    # weather
     weather_reorder = weather.copy()
-    weather_reorder = weather_reorder.reindex(index=p_t.index)  # align with time
+    weather_reorder = weather_reorder.reindex(index=p_t.index)
     weather_input = weather_reorder.values.astype(np.float32)
 
     # adjacency + graph structures
@@ -162,12 +158,7 @@ def prepare_dataset(
 
     link_pe = build_link_pe(node_pe_full, buses.index, links)
 
-    # ------------------------------------------------------------------
-    # NEW: build link_edges in nodes_orig indexing for NLAT-like decoder
-    # link_edges[l] = (from_bus_idx, to_bus_idx) where indices refer to nodes_orig order.
-    # Ordering must match flow targets, which match "links" row ordering.
-    # ------------------------------------------------------------------
-    # detect column names (most common are bus0/bus1)
+    # link_edges in nodes_orig indexing
     if "bus0" in links.columns and "bus1" in links.columns:
         col0, col1 = "bus0", "bus1"
     elif "from_bus" in links.columns and "to_bus" in links.columns:
@@ -197,7 +188,6 @@ def prepare_dataset(
     assert link_edges.shape == (num_links, 2)
     assert link_edges.min() >= 0
     assert link_edges.max() < num_nodes_orig
-    # ------------------------------------------------------------------
 
     # PCA on flow if requested
     pca = None
@@ -216,73 +206,61 @@ def prepare_dataset(
         flow_target = flow_pca.astype(np.float32)
         output_weight = weight_pc.astype(np.float32)
 
-
-    # ----------------------------
     # Storage SoC -> node feature
-    # Expect columns like "Store0@Bus1". We map SoC to the corresponding bus.
-    # If no "@Bus" info exists (old dummy datasets), we keep zeros.
-    # ----------------------------
-    soc = soc.reindex(index=p_t.index)  # align time index
+    soc = soc.reindex(index=p_t.index)
     soc_bus = np.zeros((soc.shape[0], num_nodes_orig), dtype=np.float32)
 
     for col in soc.columns:
         if "@Bus" in col:
-            bus_name = col.split("@")[-1]          # e.g. "Bus1"
+            bus_name = col.split("@")[-1]
             if bus_name in bus_to_orig:
-                j = bus_to_orig[bus_name]          # node index in nodes_orig order
+                j = bus_to_orig[bus_name]
                 soc_bus[:, j] = soc[col].to_numpy(dtype=np.float32)
 
-    # normalize SoC feature to [0,1] using its max (robust even if constant)
     soc_max = float(np.max(soc_bus)) if soc_bus.size else 0.0
     if soc_max > 0:
         soc_bus = soc_bus / soc_max
 
-    soc_nodes = soc_bus[:, :, None]  # (T, num_nodes_orig, 1)
-
+    soc_nodes = soc_bus[:, :, None]
 
     # build input and output tensors
-    # X: [T, num_nodes_orig, features=(weather + demand)]
-    # here we broadcast weather features per node; notebook did something similar.
     T = gen_bus_norm.shape[0]
-    num_weather_feat = weather_input.shape[1]
-    # repeat same weather features for all nodes_orig
     weather_nodes = np.repeat(weather_input[:, None, :], num_nodes_orig, axis=1)
-    demand_nodes = demand_norm[:, :, None]  # [T, num_nodes_orig, 1]
-    # Keep demand as the LAST feature because model.py uses: demand = node_states[:, :, -1]
-    # ---------------------------------------------------------
-    # Build input tensor X
-    # Keep DEMAND as the LAST feature because model.py does:
-    #   demand = node_states[:, :, -1]
-    #
-    # Ladder:
-    #   - A/B: include_soc_feature=False -> X = [weather..., demand]
-    #   - C/D/E: include_soc_feature=True -> X = [weather..., soc, demand]
-    # ---------------------------------------------------------
+    demand_nodes = demand_norm[:, :, None]
+
+    # Keep demand as LAST feature because model.py uses node_states[:, :, -1]
     if include_soc_feature:
         X = np.concatenate([weather_nodes, soc_nodes, demand_nodes], axis=-1).astype(np.float32)
     else:
         X = np.concatenate([weather_nodes, demand_nodes], axis=-1).astype(np.float32)
 
-    # Y: [T, num_nodes_orig + num_links]
     Y_gen = gen_bus_norm.astype(np.float32)
     Y = np.concatenate([Y_gen, flow_target.astype(np.float32)], axis=-1)
 
-    # split train / test
-    idx = np.arange(T)
-    rng.shuffle(idx)
-    train_size = int(T * train_fraction)
-    train_idx = idx[:train_size]
-    test_idx = idx[train_size:]
+    # ---------------------------------------------------------
+    # CHRONOLOGICAL split instead of random split
+    # This is required for temporal windowing in architecture D.
+    # Batch-level shuffling should happen later in the tf.data pipeline.
+    # ---------------------------------------------------------
+    trainval_size = int(T * train_fraction)
+    trainval_size = max(2, min(trainval_size, T - 1))
 
-    # make validation as a slice of train
     val_fraction = 0.05
-    val_size = max(1, int(train_size * val_fraction))
-    val_idx = train_idx[:val_size]
-    train_idx = train_idx[val_size:]
+    val_size = max(1, int(trainval_size * val_fraction))
+    if trainval_size - val_size < 1:
+        val_size = trainval_size - 1
 
-    train_x, train_y = X[train_idx], Y[train_idx]
-    val_x, val_y = X[val_idx], Y[val_idx]
-    test_x, test_y = X[test_idx], Y[test_idx]
+    trainval_x = X[:trainval_size]
+    trainval_y = Y[:trainval_size]
+
+    test_x = X[trainval_size:]
+    test_y = Y[trainval_size:]
+
+    train_x = trainval_x[:-val_size]
+    train_y = trainval_y[:-val_size]
+
+    val_x = trainval_x[-val_size:]
+    val_y = trainval_y[-val_size:]
 
     meta = {
         "nodes": nodes,
@@ -299,7 +277,7 @@ def prepare_dataset(
         "edge_list": edge_list,
         "node_pe_orig": node_pe_orig,
         "link_pe": link_pe,
-        "link_edges": link_edges,  # <-- NEW
+        "link_edges": link_edges,
         "pca": pca,
         "output_weight": output_weight,
         "soc_max": np.float32(soc_max),

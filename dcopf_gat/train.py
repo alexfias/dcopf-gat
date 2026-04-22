@@ -17,7 +17,7 @@ from .architectures.registry import ARCH_REGISTRY
 from .architectures import arch_a  # noqa: F401
 from .architectures import arch_b  # noqa: F401
 from .architectures import arch_c  # noqa: F401
-# from .architectures import arch_d  # noqa: F401
+from .architectures import arch_d  # noqa: F401
 # from .architectures import arch_e  # noqa: F401
 
 
