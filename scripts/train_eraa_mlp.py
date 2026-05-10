@@ -7,7 +7,7 @@ import numpy as np
 import tensorflow as tf
 
 from dcopf_gat.data_eraa import load_eraa_dataset
-
+import matplotlib.pyplot as plt
 
 def build_model(n_features: int, n_targets: int, hidden: int = 512, dropout: float = 0.1):
     inputs = tf.keras.Input(shape=(None, n_features), name="features")
@@ -56,6 +56,46 @@ def print_metrics(name: str, metrics: dict):
     print(f"  RMSE [MW]:      {metrics['rmse_mw']:.3f}")
     print(f"  R²:             {metrics['r2']:.5f}")
 
+
+def save_diagnostic_plots(y_true_norm, y_pred_norm, y_mean, y_std, out_dir: Path):
+    fig_dir = out_dir / "figures"
+    fig_dir.mkdir(parents=True, exist_ok=True)
+
+    y_true = inverse_y(y_true_norm, y_mean, y_std).reshape(-1)
+    y_pred = inverse_y(y_pred_norm, y_mean, y_std).reshape(-1)
+    err = y_pred - y_true
+
+    # Predicted vs true scatter
+    plt.figure(figsize=(6, 6))
+    plt.scatter(y_true, y_pred, s=1, alpha=0.05)
+    lim = max(abs(y_true).max(), abs(y_pred).max())
+    plt.plot([-lim, lim], [-lim, lim], "k--", linewidth=1)
+    plt.xlabel("True flow [MW]")
+    plt.ylabel("Predicted flow [MW]")
+    plt.title("ERAA MLP: Predicted vs true flows")
+    plt.tight_layout()
+    plt.savefig(fig_dir / "predicted_vs_true_flows.png", dpi=200)
+    plt.close()
+
+    # Error histogram
+    plt.figure(figsize=(7, 4))
+    plt.hist(err, bins=200)
+    plt.xlabel("Prediction error [MW]")
+    plt.ylabel("Count")
+    plt.title("ERAA MLP: Flow error distribution")
+    plt.tight_layout()
+    plt.savefig(fig_dir / "flow_error_histogram.png", dpi=200)
+    plt.close()
+
+    # Absolute error versus absolute flow
+    plt.figure(figsize=(7, 5))
+    plt.scatter(np.abs(y_true), np.abs(err), s=1, alpha=0.05)
+    plt.xlabel("|True flow| [MW]")
+    plt.ylabel("|Error| [MW]")
+    plt.title("ERAA MLP: Error vs flow magnitude")
+    plt.tight_layout()
+    plt.savefig(fig_dir / "abs_error_vs_abs_flow.png", dpi=200)
+    plt.close()
 
 def main():
     parser = argparse.ArgumentParser()
@@ -131,6 +171,14 @@ def main():
     print_metrics("Validation", val_metrics)
     print_metrics("Test", test_metrics)
 
+    save_diagnostic_plots(
+        ds.y_test,
+        y_test_pred,
+        ds.y_mean,
+        ds.y_std,
+        Path(args.output_dir),
+    )
+    
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
