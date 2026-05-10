@@ -29,13 +29,15 @@ def _standardize_train_val_test(
     y_train: np.ndarray,
     y_val: np.ndarray,
     y_test: np.ndarray,
-    eps: float = 1e-6,
+    eps: float = 1e-3,
 ):
     x_mean = X_train.mean(axis=(0, 1), keepdims=True)
-    x_std = X_train.std(axis=(0, 1), keepdims=True) + eps
+    x_std_raw = X_train.std(axis=(0, 1), keepdims=True)
+    x_std = np.where(x_std_raw < eps, 1.0, x_std_raw)
 
     y_mean = y_train.mean(axis=(0, 1), keepdims=True)
-    y_std = y_train.std(axis=(0, 1), keepdims=True) + eps
+    y_std_raw = y_train.std(axis=(0, 1), keepdims=True)
+    y_std = np.where(y_std_raw < eps, 1.0, y_std_raw)
 
     X_train = (X_train - x_mean) / x_std
     X_val = (X_val - x_mean) / x_std
