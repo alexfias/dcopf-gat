@@ -160,6 +160,43 @@ def save_diagnostic_plots(y_true_norm, y_pred_norm, y_mean, y_std, out_dir: Path
     plt.close()
 
 
+def save_predicted_flows(
+    y_pred_norm: np.ndarray,
+    y_true_norm: np.ndarray,
+    y_mean: np.ndarray,
+    y_std: np.ndarray,
+    out_dir: Path,
+    split: str,
+    edge_names=None,
+):
+    import pandas as pd
+
+    flows_pred = inverse_y(y_pred_norm, y_mean, y_std)
+    flows_true = inverse_y(y_true_norm, y_mean, y_std)
+    flows_error = flows_pred - flows_true
+
+    n_edges = flows_pred.shape[1]
+
+    if edge_names is None:
+        edge_names = [f"edge_{i}" for i in range(n_edges)]
+
+    pred_df = pd.DataFrame(flows_pred, columns=edge_names)
+    true_df = pd.DataFrame(flows_true, columns=edge_names)
+    err_df = pd.DataFrame(flows_error, columns=edge_names)
+
+    pred_df.to_csv(out_dir / f"{split}_predicted_flows_mw.csv", index=False)
+    true_df.to_csv(out_dir / f"{split}_true_flows_mw.csv", index=False)
+    err_df.to_csv(out_dir / f"{split}_flow_errors_mw.csv", index=False)
+
+    np.savez_compressed(
+        out_dir / f"{split}_flows_mw.npz",
+        predicted=flows_pred,
+        true=flows_true,
+        error=flows_error,
+        edge_names=np.array(edge_names),
+    )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", default="data_eraa_ml")
@@ -231,6 +268,28 @@ def main():
 
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    edge_names = getattr(ds, "edge_names", None)
+
+    save_predicted_flows(
+        y_test_pred,
+        ds.y_edges_test,
+        ds.y_mean,
+        ds.y_std,
+        out_dir,
+        split="test",
+        edge_names=edge_names,
+    )
+
+    save_predicted_flows(
+        y_val_pred,
+        ds.y_edges_val,
+        ds.y_mean,
+        ds.y_std,
+        out_dir,
+        split="val",
+        edge_names=edge_names,
+    )
 
     save_diagnostic_plots(
         ds.y_edges_test,
